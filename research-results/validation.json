@@ -1,0 +1,32 @@
+{
+  "validatedAtUTC": "2026-11-16T03:16:19.135773+00:00",
+  "validator": "Independent Python csv/statistics/math/hashlib; no application aggregation code imported",
+  "pythonVersion": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+  "validatorSha256": "6bf2acdbd8e6c8142ef12048ddeed395f02c49b209f60ff9d5f908d4813dc4fe",
+  "integrityPassed": true,
+  "experimentComplete": true,
+  "rawRows": 880,
+  "summaryRows": 44,
+  "measuredStatuses": {
+    "success": 440
+  },
+  "warmupStatuses": {
+    "success": 440
+  },
+  "completeGroups": 44,
+  "checks": [
+    "row/group completeness",
+    "unique identifiers",
+    "rotating schedule",
+    "phase/trial timestamp sequencing",
+    "OEIS counts for all successful phases",
+    "within-group deterministic counters",
+    "full-tree node/backtrack agreement",
+    "median/min/max/mean/population and sample SD",
+    "baseline percentages and speedups",
+    "warm-up/incomplete exclusion",
+    "unavailable memory left blank",
+    "archived source SHA-256"
+  ],
+  "errors": []
+}
