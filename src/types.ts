@@ -26,7 +26,48 @@ export interface Trial {
   median: number;
   min: number;
   max: number;
+  stddev: number | null;
   metrics: Metrics;
+}
+export type TrialStatus =
+  | "pending"
+  | "running"
+  | "success"
+  | "failed"
+  | "timed_out"
+  | "cancelled"
+  | "skipped";
+export interface TrialRecord {
+  order: number;
+  executionOrder: number | null;
+  n: number;
+  algorithm: AlgorithmId;
+  repetition: number;
+  status: TrialStatus;
+  elapsed: number | null;
+  metrics: Metrics | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+}
+export interface Experiment {
+  id: string;
+  status: "running" | "completed" | "completed_with_errors" | "cancelled";
+  startedAt: string;
+  finishedAt: string | null;
+  configuration: {
+    from: number;
+    to: number;
+    repetitions: number;
+    timeoutPerExecutionSeconds: number;
+    selectedAlgorithms: AlgorithmId[];
+    executionOrder: string;
+    warmup: string;
+    source: string;
+    environment: Record<string, string | number | null>;
+    memory: string;
+  };
+  trials: TrialRecord[];
 }
 export const ALGORITHMS: {
   id: AlgorithmId;

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowDownToLine,
@@ -20,15 +20,26 @@ import {
   TrendingUp,
   X,
   Maximize2,
+  FastForward,
 } from "lucide-react";
 import {
   ALGORITHMS,
   KNOWN,
   type AlgorithmId,
   type SearchResult,
-  type Trial,
+  type Experiment,
+  type SearchEvent,
 } from "./types";
-import { median, runWorker } from "./benchmark/run";
+import { runWorker } from "./benchmark/run";
+import {
+  createExperiment,
+  executeExperiment,
+  exportExperiment,
+  improvementFor,
+  summarize,
+  trialCounts,
+} from "./benchmark/experiment";
+import { eventIndexes, jumpIndex, playbackTiming } from "./playback";
 import Board from "./components/Board";
 import Methodology from "./pages/Methodology";
 const ResultCharts = lazy(() => import("./components/ResultCharts"));
@@ -74,6 +85,15 @@ export default function App() {
     [loading, setLoading] = useState(false),
     [solverError, setSolverError] = useState(""),
     [sample, setSample] = useState(-1);
+  const [fastForward, setFastForward] = useState(false);
+  const [jumpType, setJumpType] = useState<SearchEvent["type"]>("solution");
+  const timing = playbackTiming(speed, fastForward);
+  const jumpEvents = useMemo(
+    () => eventIndexes(result?.events ?? [], jumpType),
+    [result, jumpType],
+  );
+  const previousJump = jumpIndex(jumpEvents, cursor, -1);
+  const nextJump = jumpIndex(jumpEvents, cursor, 1);
   const solverController = useRef<AbortController | null>(null);
   const [from, setFrom] = useState(8),
     [to, setTo] = useState(10),
@@ -85,8 +105,16 @@ export default function App() {
     [running, setRunning] = useState(false),
     [progress, setProgress] = useState(""),
     [error, setError] = useState(""),
-    [results, setResults] = useState<Trial[]>([]),
-    [runConfig, setRunConfig] = useState<object | null>(null);
+    [experiment, setExperiment] = useState<Experiment | null>(null);
+  const results = useMemo(
+    () => (experiment ? summarize(experiment) : []),
+    [experiment],
+  );
+  const runConfig = experiment?.configuration;
+  const counts = useMemo(
+    () => (experiment ? trialCounts(experiment) : null),
+    [experiment],
+  );
   const benchmarkController = useRef<AbortController | null>(null);
   const [verification, setVerification] = useState(""),
     [verifying, setVerifying] = useState(false);
@@ -114,19 +142,20 @@ export default function App() {
   );
   useEffect(() => {
     if (!playing || !result) return;
-    const id = window.setInterval(
-      () =>
-        setCursor((c) => {
-          if (c >= result.events.length - 1) {
-            setPlaying(false);
-            return c;
-          }
-          return c + 1;
-        }),
-      Math.max(12, 520 - speed * 5),
-    );
+    const id = window.setInterval(() => {
+      setCursor((c) => Math.min(c + timing.stride, result.events.length - 1));
+    }, timing.interval);
     return () => clearInterval(id);
-  }, [playing, result, speed]);
+  }, [playing, result, timing.interval, timing.stride]);
+  useEffect(() => {
+    if (playing && result && cursor >= result.events.length - 1)
+      setPlaying(false);
+  }, [cursor, result, playing]);
+  function seek(position: number) {
+    setPlaying(false);
+    setSample(-1);
+    setCursor(position);
+  }
   function navigate(id: Page) {
     location.hash = id;
     setPlaying(false);
@@ -157,6 +186,7 @@ export default function App() {
     setCursor(-1);
     setPlaying(false);
     setSample(-1);
+    setFastForward(false);
     setSolverError("");
   }
   async function startSolver() {
@@ -172,13 +202,15 @@ export default function App() {
     setSolverError("");
     try {
       const r = await runWorker(n, algorithm, true, 30000, controller.signal);
+      if (controller.signal.aborted || solverController.current !== controller)
+        return;
       if (r.solutions !== KNOWN[n])
         throw new Error(
           "Correctness failure: result differs from the reference count.",
         );
       setResult(r);
       setCursor(-1);
-      setPlaying(true);
+      setPlaying(readPage() === "solver" && !document.hidden);
     } catch (e) {
       if (!controller.signal.aborted) setSolverError((e as Error).message);
     } finally {
@@ -196,82 +228,65 @@ export default function App() {
       setError("Select at least one algorithm and a valid board-size range.");
       return;
     }
-    setRunning(true);
-    setResults([]);
-    setError("");
     const controller = new AbortController();
     benchmarkController.current = controller;
-    setRunConfig({
+    const run = createExperiment({
       from,
       to,
       repetitions: repeats,
       timeoutPerExecutionSeconds: timeout,
-      warmup: "One full warm-up in each trial worker",
-      startedAt: new Date().toISOString(),
+      selectedAlgorithms: ALGORITHMS.filter((a) => selected.includes(a.id)).map(
+        (a) => a.id,
+      ),
+      executionOrder:
+        "For each N, rotate the selected canonical algorithm list left by (repetition - 1 + N - starting N) modulo algorithm count. Sequential execution; exact order is retained per trial. Complete cycles balance positions; partial cycles are not fully counterbalanced.",
+      warmup:
+        "One untimed full warm-up in the same fresh worker before each measured execution",
       source: "Visitor-generated browser benchmark",
       environment: {
         userAgent: navigator.userAgent,
-        logicalProcessors: navigator.hardwareConcurrency,
+        logicalProcessors: navigator.hardwareConcurrency ?? null,
         language: navigator.language,
         platform: navigator.platform,
+        timeOrigin: performance.timeOrigin,
+        timer: "performance.now(); browser precision and device load apply",
       },
       memory: "Not available: no reliable isolated per-algorithm measurement",
     });
-    let completed = 0;
-    const total = (to - from + 1) * selected.length * repeats;
+    setRunning(true);
+    setError("");
+    setExperiment(run);
     try {
-      for (let size = from; size <= to; size++)
-        for (const a of selected) {
-          const times: number[] = [];
-          let last: SearchResult | null = null;
-          for (let rep = 0; rep < repeats; rep++) {
+      const completed = await executeExperiment(
+        run,
+        runWorker,
+        controller.signal,
+        (snapshot) => {
+          setExperiment(snapshot);
+          const active = snapshot.trials.find((t) => t.status === "running");
+          const c = trialCounts(snapshot);
+          if (active)
             setProgress(
-              `N = ${size} · ${ALGORITHMS.find((x) => x.id === a)!.short} · trial ${rep + 1}/${repeats} · ${completed}/${total} complete`,
+              `N = ${active.n} · ${ALGORITHMS.find((a) => a.id === active.algorithm)!.short} · trial ${active.repetition}/${repeats} · ${c.success}/${snapshot.trials.length} complete`,
             );
-            last = await runWorker(
-              size,
-              a,
-              false,
-              timeout * 1000,
-              controller.signal,
-              true,
-            );
-            if (last.solutions !== KNOWN[size])
-              throw new Error(
-                `Correctness failure for ${a} at N=${size}: expected ${KNOWN[size]}, received ${last.solutions}.`,
-              );
-            times.push(last.elapsed);
-            completed++;
-          }
-          if (last) {
-            const metrics = {
-              nodes: last.nodes,
-              checks: last.checks,
-              backtracks: last.backtracks,
-              solutions: last.solutions,
-            };
-            setResults((r) => [
-              ...r,
-              {
-                n: size,
-                algorithm: a,
-                times,
-                median: median(times),
-                min: Math.min(...times),
-                max: Math.max(...times),
-                metrics,
-              },
-            ]);
-          }
-        }
-      setProgress(
-        `Completed ${completed} measured trials. All counts verified.`,
+        },
       );
+      const c = trialCounts(completed);
+      setProgress(
+        completed.status === "completed"
+          ? `Completed ${c.success} measured trials. All counts verified.`
+          : `${c.success}/${completed.trials.length} trials succeeded. Only fully repeated groups are compared.`,
+      );
+      if (completed.status === "cancelled")
+        setError(
+          "Cancelled. The trial log and fully repeated groups remain exportable.",
+        );
+      else if (completed.status === "completed_with_errors")
+        setError(
+          `${c.failed} failed and ${c.timed_out} timed-out trials. Inspect the trial log for details.`,
+        );
     } catch (e) {
       setError((e as Error).message);
-      setProgress(
-        `${completed}/${total} trials completed. Only fully repeated groups are retained.`,
-      );
     } finally {
       setRunning(false);
     }
@@ -311,49 +326,11 @@ export default function App() {
     }
   }
   function download(format: "csv" | "json") {
-    const metadata = {
-      researchTitle:
-        "N-Queens: Optimizing Backtracking Algorithms for Performance and Scalability",
-      configuration: runConfig,
-      exportedAt: new Date().toISOString(),
-    };
-    let content = JSON.stringify({ ...metadata, results }, null, 2);
-    if (format === "csv") {
-      const escape = (v: unknown) => `"${String(v).replaceAll('"', '""')}"`;
-      const rows = [
-        ["metadata", JSON.stringify(metadata)],
-        [
-          "n",
-          "algorithm",
-          "median_ms",
-          "min_ms",
-          "max_ms",
-          "nodes",
-          "backtracks",
-          "candidate_checks",
-          "solutions",
-          "memory",
-          "trial_times_ms",
-        ],
-        ...results.map((r) => [
-          r.n,
-          r.algorithm,
-          r.median,
-          r.min,
-          r.max,
-          r.metrics.nodes,
-          r.metrics.backtracks,
-          r.metrics.checks,
-          r.metrics.solutions,
-          "Not available",
-          JSON.stringify(r.times),
-        ]),
-      ];
-      content = rows.map((row) => row.map(escape).join(",")).join("\r\n");
-    }
+    if (!experiment) return;
+    const content = exportExperiment(experiment, format);
     const url = URL.createObjectURL(
       new Blob([content], {
-        type: format === "csv" ? "text/csv" : "application/json",
+        type: format === "csv" ? "text/csv;charset=utf-8" : "application/json",
       }),
     );
     const link = document.createElement("a");
@@ -361,6 +338,141 @@ export default function App() {
     link.download = `nqueens-benchmark.${format}`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function playbackControls() {
+    return (
+      <>
+        <div className="playback-toolbar" aria-label="Playback controls">
+          <button
+            className="primary"
+            disabled={loading || running || verifying}
+            onClick={() => (playing ? setPlaying(false) : void startSolver())}
+          >
+            {playing ? <Pause size={16} /> : <Play size={16} />}
+            {loading
+              ? "Preparing…"
+              : playing
+                ? "Pause"
+                : result
+                  ? "Resume"
+                  : "Start visualization"}
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Reset visualization"
+            title="Reset / cancel computation"
+            onClick={reset}
+          >
+            <RotateCcw size={17} />
+          </button>
+          <button
+            aria-label="Fast-forward playback"
+            aria-pressed={fastForward}
+            disabled={!result || running || verifying}
+            onClick={() => setFastForward((value) => !value)}
+          >
+            <FastForward size={17} />
+            <span>8×</span>
+          </button>
+        </div>
+        <div className="step-controls" aria-label="Recorded event navigation">
+          <button
+            aria-label="First recorded step"
+            title="First recorded step"
+            disabled={!result}
+            onClick={() => seek(-1)}
+          >
+            <SkipBack size={16} />
+          </button>
+          <button
+            aria-label="Previous step"
+            title="Previous step"
+            disabled={!result || cursor < 0}
+            onClick={() => seek(cursor - 1)}
+          >
+            <ChevronLeft size={17} />
+          </button>
+          <span>
+            {number(cursor + 1)} / {number(result?.events.length ?? 0)}
+          </span>
+          <button
+            aria-label="Next step"
+            title="Next step"
+            disabled={!result || cursor >= result.events.length - 1}
+            onClick={() => seek(cursor + 1)}
+          >
+            <ChevronRight size={17} />
+          </button>
+          <button
+            aria-label="Last recorded step"
+            title="Last recorded step"
+            disabled={!result}
+            onClick={() => seek((result?.events.length ?? 1) - 1)}
+          >
+            <SkipForward size={16} />
+          </button>
+        </div>
+        <label className="timeline-label" htmlFor="timeline">
+          {sample >= 0
+            ? "Playback cursor (solution sample shown)"
+            : "Recorded playback progress"}{" "}
+          <span>
+            {result
+              ? (((cursor + 1) / result.events.length) * 100).toFixed(1)
+              : "0"}
+            %
+          </span>
+        </label>
+        <input
+          id="timeline"
+          type="range"
+          min={-1}
+          max={Math.max(0, (result?.events.length ?? 1) - 1)}
+          value={cursor}
+          disabled={!result}
+          aria-label="Recorded playback progress"
+          onChange={(e) => seek(+e.target.value)}
+        />
+        <div className="jump-controls">
+          <label>
+            Jump to event
+            <select
+              value={jumpType}
+              onChange={(e) =>
+                setJumpType(e.target.value as SearchEvent["type"])
+              }
+            >
+              <option value="solution">Discovered solution</option>
+              <option value="place">Queen placement</option>
+              <option value="remove">Backtrack</option>
+              <option value="reject">Rejected candidate</option>
+            </select>
+          </label>
+          <button
+            aria-label="Previous significant event"
+            disabled={previousJump === null}
+            onClick={() => previousJump !== null && seek(previousJump)}
+          >
+            <ChevronLeft size={16} />
+            Previous
+          </button>
+          <button
+            aria-label="Next significant event"
+            disabled={nextJump === null}
+            onClick={() => nextJump !== null && seek(nextJump)}
+          >
+            Next
+            <ChevronRight size={16} />
+          </button>
+        </div>
+        <p className="playback-hint">
+          {timing.stride > 1
+            ? `Fast playback renders every ${timing.stride}th recorded state; use steps or jumps to inspect individual events.`
+            : "Each frame is an actual recorded search event."}{" "}
+          Jumps search the recorded prefix only.
+        </p>
+      </>
+    );
   }
   function solver() {
     return (
@@ -371,12 +483,25 @@ export default function App() {
           </div>
           <span className="tag">
             <span className="dot" />
-            {playing ? "Playing" : loading ? "Computing" : "Interactive"}
+            {sample >= 0
+              ? "Solution sample"
+              : playing
+                ? "Playing"
+                : loading
+                  ? "Computing"
+                  : "Interactive"}
           </span>
         </div>
         <div className="solver-layout">
           <div className="board-area">
-            <Board n={n} board={board} event={sample < 0 ? event : undefined} />
+            <Board
+              n={n}
+              board={board}
+              event={sample < 0 ? event : undefined}
+              frame={cursor}
+              animate={playing && timing.stride === 1 && sample < 0}
+              duration={Math.min(300, timing.interval * 0.8)}
+            />
             <div className="board-legend">
               <span>
                 <i className="legend-dot green" />
@@ -392,6 +517,7 @@ export default function App() {
               </span>
             </div>
           </div>
+          <div className="controls-transport">{playbackControls()}</div>
           <div className="solver-controls">
             <label>
               Board size <span>N = {n}</span>
@@ -441,85 +567,18 @@ export default function App() {
               value={speed}
               onChange={(e) => setSpeed(+e.target.value)}
             />
-            <div className="play-controls">
-              <button
-                className="primary"
-                disabled={loading || running || verifying}
-                onClick={() =>
-                  playing ? setPlaying(false) : void startSolver()
-                }
-              >
-                {playing ? <Pause size={16} /> : <Play size={16} />}{" "}
-                {loading
-                  ? "Preparing…"
-                  : playing
-                    ? "Pause"
-                    : result
-                      ? "Resume"
-                      : "Start visualization"}
-              </button>
-              <button
-                className="icon-button"
-                title="Reset visualization"
-                aria-label="Reset visualization"
-                onClick={reset}
-              >
-                <RotateCcw size={17} />
-              </button>
-            </div>
-            <div className="step-controls">
-              <button
-                title="First recorded step"
-                aria-label="First recorded step"
-                disabled={!result || playing}
-                onClick={() => {
-                  setSample(-1);
-                  setCursor(-1);
-                }}
-              >
-                <SkipBack size={16} />
-              </button>
-              <button
-                title="Previous step"
-                aria-label="Previous step"
-                disabled={!result || playing || cursor < 0}
-                onClick={() => {
-                  setSample(-1);
-                  setCursor((c) => c - 1);
-                }}
-              >
-                <ChevronLeft size={17} />
-              </button>
-              <span>
-                {cursor + 1} / {number(result?.events.length ?? 0)}
-              </span>
-              <button
-                title="Next step"
-                aria-label="Next step"
-                disabled={
-                  !result ||
-                  playing ||
-                  cursor === (result?.events.length ?? 0) - 1
-                }
-                onClick={() => {
-                  setSample(-1);
-                  setCursor((c) => c + 1);
-                }}
-              >
-                <ChevronRight size={17} />
-              </button>
-              <button
-                title="Last recorded step"
-                aria-label="Last recorded step"
-                disabled={!result || playing}
-                onClick={() => {
-                  setSample(-1);
-                  setCursor((result?.events.length ?? 1) - 1);
-                }}
-              >
-                <SkipForward size={16} />
-              </button>
-            </div>
+            <p className="playback-hint">
+              {Math.round(
+                (1000 / timing.interval) * timing.stride,
+              ).toLocaleString()}{" "}
+              recorded events / second. Higher speeds skip display frames;
+              counting is unchanged.
+            </p>
+            <h3 className="metrics-heading">
+              {sample >= 0
+                ? "Completed search counters"
+                : "Recorded frame counters"}
+            </h3>
             <div className="live-metrics">
               {[
                 ["Queens placed", board.filter((c) => c >= 0).length],
@@ -538,7 +597,10 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <div className="event-status" aria-live="polite">
+            <div
+              className="event-status"
+              aria-live={playing ? "off" : "polite"}
+            >
               <span className="dot" />
               {sample >= 0
                 ? `Solution sample ${sample + 1} · completed search counters`
@@ -597,6 +659,52 @@ export default function App() {
       </section>
     );
   }
+  function experimentSummary() {
+    if (!experiment || !counts) return null;
+    return (
+      <section className="experiment-summary" aria-label="Experiment status">
+        <div>
+          <strong>{experiment.status.replaceAll("_", " ")}</strong>
+          <p>
+            {counts.success} successful · {counts.failed} failed ·{" "}
+            {counts.timed_out} timed out · {counts.cancelled} cancelled ·{" "}
+            {counts.skipped} skipped · {counts.pending + counts.running}{" "}
+            remaining
+          </p>
+          <p>
+            N = {runConfig?.from}–{runConfig?.to} · {runConfig?.repetitions}{" "}
+            repetitions · {runConfig?.timeoutPerExecutionSeconds}s per execution
+            · rotating order
+          </p>
+        </div>
+        {!results.length && (
+          <div className="button-group">
+            <button onClick={() => download("csv")}>CSV</button>
+            <button onClick={() => download("json")}>JSON</button>
+          </div>
+        )}
+        <details>
+          <summary>Trial log, configuration & environment</summary>
+          <p>
+            Only groups with every configured repetition successful enter charts
+            and comparisons. Individual successful timings remain in exports
+            even when their group is incomplete.
+          </p>
+          <pre>{JSON.stringify(runConfig, null, 2)}</pre>
+          <ol className="trial-log">
+            {experiment.trials.map((t) => (
+              <li key={t.order}>
+                #{t.order} · N={t.n} · {t.algorithm} · repetition {t.repetition}{" "}
+                · <strong>{t.status}</strong>
+                {t.elapsed !== null ? ` · ${t.elapsed.toFixed(3)} ms` : ""}
+                {t.error ? ` · ${t.error}` : ""}
+              </li>
+            ))}
+          </ol>
+        </details>
+      </section>
+    );
+  }
   function table() {
     return (
       <section className="panel table-panel">
@@ -618,7 +726,12 @@ export default function App() {
             </button>
           </div>
         </div>
-        <div className="table-scroll">
+        <div
+          className="table-scroll"
+          tabIndex={0}
+          role="region"
+          aria-label="Experimental results, scroll horizontally for all columns"
+        >
           <table>
             <thead>
               <tr>
@@ -639,13 +752,7 @@ export default function App() {
             </thead>
             <tbody>
               {results.map((r) => {
-                const baseline = results.find(
-                  (b) => b.n === r.n && b.algorithm === "conventional",
-                );
-                const improvement =
-                  baseline && baseline.median > 0
-                    ? ((baseline.median - r.median) / baseline.median) * 100
-                    : null;
+                const improvement = improvementFor(r, results);
                 return (
                   <tr key={`${r.n}-${r.algorithm}`}>
                     <td>{r.n}</td>
@@ -664,20 +771,23 @@ export default function App() {
                     <td className="mono">
                       {r.min.toFixed(3)}–{r.max.toFixed(3)}
                     </td>
+                    <td className="mono">
+                      {r.stddev === null
+                        ? "Unavailable (1 trial)"
+                        : r.stddev.toFixed(3)}
+                    </td>
                     <td>{number(r.metrics.nodes)}</td>
                     <td>{number(r.metrics.backtracks)}</td>
                     <td>{number(r.metrics.checks)}</td>
                     <td>{number(r.metrics.solutions)}</td>
                     <td
                       className={
-                        improvement !== null && improvement >= 0
+                        improvement.value !== null && improvement.value >= 0
                           ? "positive"
                           : ""
                       }
                     >
-                      {improvement === null
-                        ? "No baseline"
-                        : `${improvement.toFixed(1)}%`}
+                      {improvement.label}
                     </td>
                   </tr>
                 );
@@ -687,8 +797,11 @@ export default function App() {
         </div>
         <p className="table-footnote">
           Improvement = (baseline − optimized) / baseline × 100. Negative values
-          indicate a slower implementation. Memory: Not available; browsers do
-          not expose reliable per-algorithm heap measurements.
+          indicate a slower implementation. Standard deviation describes the
+          retained trial population; one trial has no variability estimate. Only
+          fully successful repeated groups are included. Scroll the table
+          horizontally for all columns. Memory: Not available; browsers do not
+          expose reliable per-algorithm heap measurements.
         </p>
       </section>
     );
@@ -806,7 +919,7 @@ export default function App() {
                     <h2>Configure your experiment</h2>
                     <p>
                       One full warm-up per measured trial · sequential worker
-                      execution
+                      execution with rotating algorithm order
                     </p>
                   </div>
                   <Settings2 size={20} />
@@ -843,7 +956,7 @@ export default function App() {
                       value={repeats}
                       onChange={(e) => setRepeats(+e.target.value)}
                     >
-                      {[1, 3, 5, 10].map((x) => (
+                      {[1, 3, 4, 5, 8, 10].map((x) => (
                         <option key={x}>{x}</option>
                       ))}
                     </select>
@@ -929,12 +1042,14 @@ export default function App() {
                   universally reproducible research results.
                 </span>
               </div>
+              {experiment && experimentSummary()}
               {results.length ? table() : empty}
             </>
           )}
 
           {page === "dashboard" && (
             <>
+              {experiment && experimentSummary()}
               {results.length ? (
                 <>
                   <div className="dashboard-summary">

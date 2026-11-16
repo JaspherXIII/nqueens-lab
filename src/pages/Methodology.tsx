@@ -52,9 +52,9 @@ export default function Methodology({
                   [
                     "Implement independent recursive scan, occupancy-array, bitmask, and first-row symmetry solvers with shared instrumentation definitions.",
                     "Compare all four implementations with known counts for N = 0–14, including odd, even, unsatisfiable, and empty boards.",
-                    "Execute sequentially in dedicated workers; each measured trial follows a full warm-up in the same worker.",
-                    "Retain complete trial times and search counters; exclude incomplete, failed, timed-out, or cancelled groups.",
-                    "Report medians, min–max variability, baseline improvement, and growth across board sizes.",
+                    "Execute sequentially in dedicated workers with rotating algorithm order; each measured trial follows a full warm-up in the same worker.",
+                    "Retain the status and exact order of every planned trial. Only fully successful repeated groups enter comparisons; individual successes remain in the export log.",
+                    "Report medians, min–max whiskers, population standard deviation, valid baseline improvement, and growth across board sizes.",
                     "Replay a bounded prefix of real events and inspect valid solution samples without storing every solution.",
                   ][i]
                 }
@@ -184,14 +184,29 @@ export default function Methodology({
           performance.now() inside the solver.
         </p>
         <p>
+          For each board size, repetitions rotate the canonical selected
+          algorithm list left by (repetition − 1 + board size − starting size)
+          modulo the algorithm count. Every full cycle balances execution
+          positions; an incomplete cycle is not fully counterbalanced. This
+          reduces fixed-order effects without removing thermal, workload, or JIT
+          variability. The exact planned order and actual start/end timestamps
+          are retained for each trial.
+        </p>
+        <p>
           The default is three trials, N = 8–10, and a ten-second limit per
           execution. Internal deadline checks occur every 1,024 recursive calls;
           the main thread additionally terminates unresponsive workers.
           Cancellation terminates the active worker. A timed-out or cancelled
           result is never reported as a complete count or timing. Fully
-          completed groups from an interrupted experiment remain exportable.
-          Refreshing clears experiment results; export CSV or JSON to retain
-          them.
+          completed groups from an interrupted experiment remain comparable.
+          Exports also retain successful measurements from incomplete groups,
+          failures, timeouts, cancellation, and skipped trials, with unavailable
+          measurements left blank in CSV or null in JSON. Median, min–max and
+          population standard deviation use only fully successful repeated
+          groups. One trial has no variability estimate. Whiskers show observed
+          ranges, not confidence intervals. Zero baseline timings are explicitly
+          distinguished from unavailable conventional baselines. Refreshing
+          clears experiment results; export CSV or JSON to retain them.
         </p>
         <p>
           Memory is reported as “Not available”: browser heap APIs are
@@ -200,7 +215,10 @@ export default function Methodology({
           thermal effects limit comparability. No controlled research dataset is
           supplied; all charts are explicitly visitor-generated. Exported
           metadata includes configuration, environment, raw trials, timestamp,
-          and source.
+          source, selected algorithms, completion status, and execution order.
+          CSV has a single consistent header with one row per planned trial and
+          repeated experiment metadata. JSON includes the complete log and valid
+          group summaries. Neither format fabricates missing measurements.
         </p>
       </section>
     </>

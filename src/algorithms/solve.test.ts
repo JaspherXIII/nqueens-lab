@@ -37,4 +37,21 @@ describe("independent algorithm correctness", () => {
     for (const n of [-1, 15, 4.5, NaN])
       expect(() => solve(n, "bitmask")).toThrow();
   });
+  it("caps every algorithm at 20,000 events while completing all N=10 solutions", () => {
+    for (const algorithm of ALGORITHMS) {
+      const r = solve(10, algorithm.id, { record: true });
+      expect(r.complete).toBe(true);
+      expect(r.solutions).toBe(724);
+      expect(r.events).toHaveLength(20000);
+      expect(r.recordedLimit).toBe(true);
+      expect(r.samples).toHaveLength(100);
+      expect(r.events.at(-1)!.solutions).toBeLessThan(r.solutions);
+      for (const event of r.events) {
+        if (event.type === "place")
+          expect(event.board[event.row]).toBe(event.col);
+        if (event.type === "remove") expect(event.board[event.row]).toBe(-1);
+        if (event.type === "reject") expect(event.board[event.row]).toBe(-1);
+      }
+    }
+  });
 });

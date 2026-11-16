@@ -1,9 +1,10 @@
 @import "tailwindcss";
+@import "@fontsource-variable/inter";
 @theme {
-  --font-sans: "Inter", "Segoe UI", sans-serif;
+  --font-sans: "Inter Variable", "Segoe UI", sans-serif;
 }
 :root {
-  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  font-family: "Inter Variable", "Segoe UI", Arial, sans-serif;
   font-synthesis: none;
   color: #0f172a;
   background: #f8fafc;
@@ -144,6 +145,7 @@ p {
 .workspace-shell {
   height: 100dvh;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 76px minmax(0, 1fr) 44px;
 }
 .workspace-header {
@@ -298,7 +300,6 @@ p {
   justify-content: center;
   color: #2563eb;
   filter: drop-shadow(0 3px 1px #1e40af17);
-  animation: queen-place 0.25s ease-out;
   z-index: 1;
 }
 .queen > svg {
@@ -319,7 +320,6 @@ p {
   color: #dc2626;
   width: 42%;
   height: 42%;
-  animation: conflict-enter 0.2s;
   z-index: 1;
 }
 .conflict svg {
@@ -330,7 +330,6 @@ p {
 .removed-queen,
 .square-dark .removed-queen {
   color: #d97706;
-  animation: queen-remove 0.6s ease-out forwards;
 }
 .board-legend {
   display: flex;
@@ -1406,7 +1405,7 @@ td {
   }
   .workspace-header {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: 66px 50px;
     gap: 0 15px;
     padding-inline: 25px;
@@ -1482,5 +1481,353 @@ td {
   }
   .workspace-heading {
     margin-bottom: 20px;
+  }
+}
+/* Research playback and experiment reporting. */
+.solver-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 350px);
+  grid-template-areas: "board transport" "board controls";
+  grid-template-rows: auto 1fr;
+  gap: 20px 28px;
+  padding: 24px;
+}
+.board-area {
+  grid-area: board;
+  width: 100%;
+  max-width: 700px;
+  margin: 0 auto;
+}
+.board-area .board-frame {
+  width: min(100%, 640px);
+}
+.controls-transport {
+  grid-area: transport;
+  min-width: 0;
+  width: 100%;
+}
+.solver-controls {
+  grid-area: controls;
+}
+.solver-panel > .panel-heading {
+  padding: 16px 24px;
+}
+.workspace-heading h1 {
+  font-size: clamp(30px, 3vw, 42px);
+}
+.workspace-heading .intro {
+  font-size: 16px;
+  margin-top: 8px;
+}
+.board .square {
+  transition-duration: var(--event-duration);
+}
+.animate-events .placed-queen {
+  animation: queen-place var(--event-duration) ease-out;
+}
+.animate-events .removed-queen {
+  animation: queen-remove var(--event-duration) ease-out forwards;
+}
+.animate-events .conflict {
+  animation: conflict-enter var(--event-duration) ease-out;
+}
+.snapshot-events .removed-queen {
+  opacity: 0.45;
+}
+.square.attacking-queen::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border: 2px dashed #dc2626;
+  border-radius: 3px;
+  pointer-events: none;
+}
+[data-theme="dark"] .square.attacking-queen::after {
+  border-color: #fecaca;
+}
+.playback-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+.playback-toolbar > .primary {
+  flex: 1;
+  min-height: 44px;
+  min-width: 0;
+}
+.playback-toolbar .icon-button {
+  width: 44px;
+  height: 44px;
+}
+button[aria-pressed="true"] {
+  background: var(--blue-soft);
+  color: var(--blue);
+  border-color: var(--blue);
+}
+.controls-transport .step-controls {
+  margin-top: 8px;
+}
+.step-controls button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.timeline-label {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+}
+input[type="range"] {
+  min-height: 32px;
+  touch-action: pan-y;
+}
+.controls-transport > input {
+  width: 100%;
+}
+.jump-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.jump-controls select {
+  margin-top: 5px;
+}
+.jump-controls button {
+  min-height: 44px;
+  padding-inline: 10px;
+}
+.playback-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 10px;
+}
+.board-legend {
+  font-size: 12px;
+  margin-top: 12px;
+  gap: 14px;
+}
+.metrics-heading {
+  font-size: 14px;
+  margin-top: 5px;
+}
+.live-metrics span {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.coordinate {
+  color: #526783;
+  font-size: 10px;
+}
+.square-dark .coordinate {
+  color: #425775;
+}
+.experiment-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 16px 0;
+  padding: 16px 0;
+  border-block: 1px solid var(--border);
+}
+.experiment-summary strong {
+  text-transform: capitalize;
+  color: var(--ink);
+}
+.experiment-summary p {
+  font-size: 13px;
+  margin-top: 6px;
+}
+.experiment-summary details {
+  flex-basis: 100%;
+  min-width: 0;
+}
+.experiment-summary summary {
+  cursor: pointer;
+  color: var(--blue);
+  font-size: 13px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.experiment-summary summary::before {
+  content: "+";
+  font-weight: 700;
+  margin-right: 8px;
+}
+.experiment-summary details[open] summary::before {
+  content: "-";
+}
+.experiment-summary pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.7;
+  margin-top: 12px;
+}
+.trial-log {
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px 24px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.chart-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  overscroll-behavior-inline: contain;
+}
+.chart-caption {
+  display: block;
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.chart-panel h3 {
+  font-size: 18px;
+}
+.chart-panel p {
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.table-scroll:focus-visible,
+.chart-scroll:focus-visible,
+summary:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: -3px;
+}
+.workspace-stage:focus-visible {
+  outline: 2px solid var(--blue) !important;
+  outline-offset: -2px;
+}
+@media (max-width: 800px) {
+  .solver-layout {
+    grid-template-columns: 1fr;
+    grid-template-areas: "board" "transport" "controls";
+    grid-template-rows: auto;
+    gap: 20px;
+    padding: 20px;
+  }
+  .board-area .board-frame {
+    width: min(100%, 460px);
+  }
+  .board-area,
+  .controls-transport {
+    max-width: 510px;
+    margin-inline: auto;
+  }
+  .solver-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .solver-controls > .speed-label,
+  .solver-controls > input,
+  .solver-controls > .playback-hint,
+  .solver-controls > .metrics-heading,
+  .solver-controls > .live-metrics,
+  .solver-controls > .event-status {
+    grid-column: 1 / -1;
+  }
+  .header-controls .icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .live-metrics span {
+    font-size: 12px;
+  }
+}
+@media (max-width: 580px) {
+  .workspace-page {
+    padding: 18px 14px 28px;
+  }
+  .workspace-heading {
+    margin-bottom: 16px;
+  }
+  .workspace-heading h1 {
+    font-size: 30px;
+  }
+  .workspace-heading .intro {
+    font-size: 14px;
+  }
+  .solver-panel > .panel-heading {
+    padding: 14px;
+  }
+  .solver-layout {
+    padding: 14px;
+    gap: 18px;
+  }
+  .board-area .board-frame {
+    width: min(100%, 360px);
+  }
+  .jump-controls {
+    gap: 5px;
+  }
+  .jump-controls button {
+    padding-inline: 8px;
+    font-size: 12px;
+    gap: 2px;
+  }
+  .jump-controls label {
+    font-size: 12px;
+  }
+  .jump-controls select {
+    padding-inline: 5px;
+    font-size: 12px;
+  }
+  .board-legend {
+    font-size: 11px;
+    gap: 9px;
+  }
+  .coordinate {
+    font-size: 9px;
+    top: 2px;
+    left: 2px;
+  }
+  .playback-toolbar > button[aria-pressed] {
+    width: 44px;
+    min-width: 44px;
+    padding-inline: 8px;
+  }
+  .playback-toolbar > button[aria-pressed] span {
+    display: none;
+  }
+  .playback-toolbar > .primary {
+    padding-inline: 12px;
+    font-size: 13px;
+    gap: 7px;
+  }
+  .solver-controls {
+    grid-template-columns: 1fr;
+  }
+  .solver-controls label {
+    font-size: 13px;
+  }
+  .checkboxes label {
+    font-size: 12px;
+    min-height: 44px;
+  }
+  .checkboxes input {
+    width: 16px;
+    height: 16px;
+  }
+  .primary-navigation a {
+    font-size: 12px;
+  }
+  .workspace-footer > span:last-child {
+    font-size: 10px;
+  }
+  .chart-panel {
+    padding: 20px 12px;
+  }
+  .chart-panel p,
+  .chart-caption {
+    font-size: 12px;
   }
 }

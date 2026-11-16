@@ -4,13 +4,24 @@ export default function Board({
   n,
   board,
   event,
+  frame,
+  animate,
+  duration,
 }: {
   n: number;
   board: number[];
   event?: SearchEvent;
+  frame: number;
+  animate: boolean;
+  duration: number;
 }) {
   return (
-    <div className="board-frame">
+    <div
+      className={`board-frame ${animate ? "animate-events" : "snapshot-events"}`}
+      style={
+        { "--event-duration": `${duration}ms` } as import("react").CSSProperties
+      }
+    >
       <div
         className="board"
         role="img"
@@ -28,10 +39,16 @@ export default function Board({
           const active = event?.row === row;
           const candidate = active && event?.col === col;
           const removed = candidate && event?.type === "remove";
+          const attacking =
+            queen &&
+            event?.type === "reject" &&
+            row < event.row &&
+            (col === event.col ||
+              Math.abs(col - event.col) === event.row - row);
           return (
             <div
               key={i}
-              className={`square ${(row + col) % 2 ? "square-dark" : ""} ${rejected ? "rejected" : ""} ${queen ? "occupied" : ""} ${active ? "active-row" : ""} ${candidate ? "active-candidate" : ""}`}
+              className={`square ${(row + col) % 2 ? "square-dark" : ""} ${rejected ? "rejected" : ""} ${attacking ? "attacking-queen" : ""} ${queen ? "occupied" : ""} ${active ? "active-row" : ""} ${candidate ? "active-candidate" : ""}`}
             >
               <span className="coordinate">
                 {col === 0
@@ -41,15 +58,19 @@ export default function Board({
                     : ""}
               </span>
               {queen && (
-                <span className="queen" key={`queen-${row}-${col}`}>
+                <span
+                  className={`queen ${candidate && event?.type === "place" ? "placed-queen" : ""}`}
+                  key={
+                    candidate && event?.type === "place"
+                      ? `place-${frame}`
+                      : `queen-${row}-${col}`
+                  }
+                >
                   <Crown aria-hidden="true" />
                 </span>
               )}
               {removed && (
-                <span
-                  className="queen removed-queen"
-                  key={`removed-${row}-${col}`}
-                >
+                <span className="queen removed-queen" key={`removed-${frame}`}>
                   <Crown aria-hidden="true" />
                 </span>
               )}
